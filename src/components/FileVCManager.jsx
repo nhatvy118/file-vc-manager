@@ -97,11 +97,27 @@ export default function FileVCManager() {
         }
       });
 
-      if (!response.ok) throw new Error('Failed to fetch file');
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('Permission denied');
+        }
+        throw new Error(`Failed to fetch file: ${response.status} ${response.statusText}`);
+      }
       
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
-      setViewResult({ url, type: blob.type });
+      
+      // Extract filename from Content-Disposition header
+      const contentDisposition = response.headers.get('Content-Disposition');
+      let filename = 'download';
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="([^"]+)"/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+      
+      setViewResult({ url, type: blob.type, filename });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -163,66 +179,91 @@ export default function FileVCManager() {
       if (!viewVcForm.cid.trim()) {
         throw new Error('Please enter a CID');
       }
-      if (!viewVcForm.jwtToken.trim()) {
-        throw new Error('Please enter a JWT token');
+
+      let fileResponse;
+
+      // If JWT token is provided, create presentation first
+      if (viewVcForm.jwtToken.trim()) {
+        // First, create presentation with the JWT
+        const presentationData = {
+          holder: viewVcForm.holderDid,
+          types: ["VerifiablePresentation"],
+          verifiableCredential: [viewVcForm.jwtToken.trim()]
+        };
+
+        const presentationResponse = await fetch('/auth-api/v2/presentations', {
+          method: 'POST',
+          headers: {
+            'accept': 'application/json',
+            'x-api-key': 'CyPsgCuJMo7yP6i6bejrwxFWULokdQBpJLANgsWvcBgS',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(presentationData)
+        });
+
+
+        if (!presentationResponse.ok) {
+          const errorText = await presentationResponse.text();
+          throw new Error(`Presentation failed: ${presentationResponse.status} ${presentationResponse.statusText} - ${errorText}`);
+        }
+        
+        const presentationResult = await presentationResponse.json();
+
+        // Extract the data field from presentation response for Authorization
+        const authData = presentationResult.data;
+        if (!authData) {
+          throw new Error('No data field found in presentation response');
+        }
+
+        // Then, use the presentation to view the file with Authorization header
+        fileResponse = await fetch(`/api/v1/viewer/files/${viewVcForm.cid.trim()}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'accept': 'application/octet-stream',
+            'Authorization': authData
+          },
+        });
+      } else {
+        // If no JWT, just call view file directly
+        fileResponse = await fetch(`/api/v1/viewer/files/${viewVcForm.cid.trim()}`, {
+          method: 'GET',
+          headers: {
+            'accept': 'application/octet-stream'
+          },
+        });
       }
-
-      // First, create presentation with the JWT
-      const presentationData = {
-        holder: viewVcForm.holderDid,
-        types: ["VerifiablePresentation"],
-        verifiableCredential: [viewVcForm.jwtToken.trim()]
-      };
-
-      const presentationResponse = await fetch('/auth-api/v2/presentations', {
-        method: 'POST',
-        headers: {
-          'accept': 'application/json',
-          'x-api-key': 'CyPsgCuJMo7yP6i6bejrwxFWULokdQBpJLANgsWvcBgS',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(presentationData)
-      });
-
-      if (!presentationResponse.ok) {
-        const errorText = await presentationResponse.text();
-        throw new Error(`Presentation failed: ${presentationResponse.status} ${presentationResponse.statusText} - ${errorText}`);
-      }
-      
-      const presentationResult = await presentationResponse.json();
-
-      // Extract the data field from presentation response for Authorization
-      const authData = presentationResult.data;
-      if (!authData) {
-        throw new Error('No data field found in presentation response');
-      }
-
-      // Then, use the presentation to view the file with Authorization header
-      const fileResponse = await fetch(`/api/v1/viewer/files/${viewVcForm.cid.trim()}`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'accept': 'application/octet-stream',
-          'Authorization': authData
-        },
-      });
 
       if (!fileResponse.ok) {
+        if (fileResponse.status === 401) {
+          throw new Error('Permission denied');
+        }
         const errorText = await fileResponse.text();
         throw new Error(`File access failed: ${fileResponse.status} ${fileResponse.statusText} - ${errorText}`);
       }
       
-      const blob = await fileResponse.blob();
-      const url = URL.createObjectURL(blob);
-      
-      setViewResult({ 
-        url, 
-        type: blob.type, 
-        fromVC: true,
-        presentation: presentationResult,
-        vcJwt: viewVcForm.jwtToken.trim(),
-        cid: viewVcForm.cid.trim()
-      });
+    const blob = await fileResponse.blob();
+    const url = URL.createObjectURL(blob);
+    
+    // Extract filename from Content-Disposition header
+    const contentDisposition = fileResponse.headers.get('Content-Disposition');
+    let filename = 'download';
+    if (contentDisposition) {
+      const filenameMatch = contentDisposition.match(/filename="([^"]+)"/);
+      if (filenameMatch) {
+        filename = filenameMatch[1];
+      }
+    }
+    
+    setViewResult({ 
+      url, 
+      type: blob.type, 
+      filename,
+      fromVC: !!viewVcForm.jwtToken.trim(),
+      presentation: viewVcForm.jwtToken.trim() ? {} : null,
+      vcJwt: viewVcForm.jwtToken.trim() || null,
+      cid: viewVcForm.cid.trim()
+    });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -231,7 +272,8 @@ export default function FileVCManager() {
   };
 
   const copyToClipboard = (text) => {
-    navigator.clipboard.writeText(JSON.stringify(text, null, 2));
+    const textToCopy = typeof text === 'string' ? text : JSON.stringify(text, null, 2);
+    navigator.clipboard.writeText(textToCopy);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -245,7 +287,7 @@ export default function FileVCManager() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-6">
-      <div className="max-w-4xl mx-auto">
+      <div className="w-3/4 h-full mx-auto">
         <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
           {/* Header */}
           <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-6 text-white">
@@ -414,7 +456,7 @@ export default function FileVCManager() {
                     ) : (
                       <a
                         href={viewResult.url}
-                        download
+                        download={viewResult.filename || 'download'}
                         className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                       >
                         Download File
@@ -521,7 +563,7 @@ export default function FileVCManager() {
                     <div className="flex items-center justify-between mb-2">
                       <h3 className="font-medium text-green-800">Verifiable Credential Created</h3>
                       <button
-                        onClick={() => copyToClipboard(vcResult)}
+                        onClick={() => copyToClipboard(vcResult.vc_jwt)}
                         className="flex items-center gap-1 px-3 py-1 text-sm bg-white border border-green-300 rounded hover:bg-green-50 transition-colors"
                       >
                         {copied ? <Check size={16} /> : <Copy size={16} />}
@@ -584,7 +626,6 @@ export default function FileVCManager() {
                       placeholder="eyJhbGciOiJFUzI1NksiLCJraWQiOiJkaWQ6bmRhOnRlc3RuZXQ6MHhmYjJlYTYwYThjNjI5ZmIwYmIzOTI0NzljNzgwMWE3NzJiZjhjOWY5I2tleS0xIiwidHlwIjoiSldUIn0..."
                       rows={6}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
-                      required
                     />
                     {vcResult?.vc_jwt && (
                       <button
@@ -597,7 +638,7 @@ export default function FileVCManager() {
                     )}
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
-                    Paste the JWT token from the Create VC tab result
+                    Paste the JWT token from the Create VC tab result (optional)
                   </p>
                 </div>
 
@@ -627,7 +668,7 @@ export default function FileVCManager() {
                   )}
                 </button>
 
-                {viewResult && viewResult.fromVC && (
+                {viewResult && activeTab === 'viewvc' && (
                   <div className="mt-4 space-y-4">
                     {/* File Display */}
                     <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
@@ -648,7 +689,7 @@ export default function FileVCManager() {
                           <div>
                             <a
                               href={viewResult.url}
-                              download
+                              download={viewResult.filename || 'download'}
                               className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
                             >
                               Download File
@@ -658,41 +699,43 @@ export default function FileVCManager() {
                       </div>
                     </div>
 
-                    {/* Presentation Data */}
-                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                      <h3 className="font-medium text-blue-800 mb-3">Presentation Data</h3>
-                      <div className="space-y-3">
-                        <div>
-                          <label className="block text-sm font-medium text-blue-700 mb-1">Presentation Response:</label>
-                          <pre className="text-xs bg-white p-3 rounded overflow-x-auto border border-blue-300 max-h-40">
-                            {JSON.stringify(viewResult.presentation, null, 2)}
-                          </pre>
-                        </div>
-                        <div className="flex gap-2 flex-wrap">
-                          <button
-                            onClick={() => copyToClipboard(viewResult.presentation)}
-                            className="flex items-center gap-1 px-3 py-1 text-sm bg-white border border-blue-300 rounded hover:bg-blue-50 transition-colors"
-                          >
-                            {copied ? <Check size={16} /> : <Copy size={16} />}
-                            {copied ? 'Copied!' : 'Copy Presentation'}
-                          </button>
-                          <button
-                            onClick={() => copyToClipboard(viewResult.vcJwt)}
-                            className="flex items-center gap-1 px-3 py-1 text-sm bg-white border border-blue-300 rounded hover:bg-blue-50 transition-colors"
-                          >
-                            {copied ? <Check size={16} /> : <Copy size={16} />}
-                            {copied ? 'Copied!' : 'Copy JWT'}
-                          </button>
-                          <button
-                            onClick={() => copyToClipboard(viewResult.cid)}
-                            className="flex items-center gap-1 px-3 py-1 text-sm bg-white border border-blue-300 rounded hover:bg-blue-50 transition-colors"
-                          >
-                            {copied ? <Check size={16} /> : <Copy size={16} />}
-                            {copied ? 'Copied!' : 'Copy CID'}
-                          </button>
+                    {/* Presentation Data - Only show if using VC */}
+                    {viewResult.fromVC && viewResult.presentation && (
+                      <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                        <h3 className="font-medium text-blue-800 mb-3">Presentation Data</h3>
+                        <div className="space-y-3">
+                          <div>
+                            <label className="block text-sm font-medium text-blue-700 mb-1">Presentation Response:</label>
+                            <pre className="text-xs bg-white p-3 rounded overflow-x-auto border border-blue-300 max-h-40">
+                              {JSON.stringify(viewResult.presentation, null, 2)}
+                            </pre>
+                          </div>
+                          <div className="flex gap-2 flex-wrap">
+                            <button
+                              onClick={() => copyToClipboard(viewResult.presentation)}
+                              className="flex items-center gap-1 px-3 py-1 text-sm bg-white border border-blue-300 rounded hover:bg-blue-50 transition-colors"
+                            >
+                              {copied ? <Check size={16} /> : <Copy size={16} />}
+                              {copied ? 'Copied!' : 'Copy Presentation'}
+                            </button>
+                            <button
+                              onClick={() => copyToClipboard(viewResult.vcJwt)}
+                              className="flex items-center gap-1 px-3 py-1 text-sm bg-white border border-blue-300 rounded hover:bg-blue-50 transition-colors"
+                            >
+                              {copied ? <Check size={16} /> : <Copy size={16} />}
+                              {copied ? 'Copied!' : 'Copy JWT'}
+                            </button>
+                            <button
+                              onClick={() => copyToClipboard(viewResult.cid)}
+                              className="flex items-center gap-1 px-3 py-1 text-sm bg-white border border-blue-300 rounded hover:bg-blue-50 transition-colors"
+                            >
+                              {copied ? <Check size={16} /> : <Copy size={16} />}
+                              {copied ? 'Copied!' : 'Copy CID'}
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                 )}
               </form>
