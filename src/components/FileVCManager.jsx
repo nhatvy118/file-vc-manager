@@ -12,6 +12,25 @@ export default function FileVCManager() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState(null);
 
+  const extractFilename = (contentDisposition) => {
+    if (!contentDisposition) return null;
+    const filenameStarMatch = contentDisposition.match(/filename\*=([^;]+)/i);
+    if (filenameStarMatch) {
+      const raw = filenameStarMatch[1].trim().replace(/^UTF-8''/i, '').replace(/^"|"$/g, '');
+      try {
+        const decoded = decodeURIComponent(raw);
+        if (decoded) return decoded;
+      } catch (_e) {
+        if (raw) return raw;
+      }
+    }
+    const quotedMatch = contentDisposition.match(/filename="([^"]+)"/i);
+    if (quotedMatch) return quotedMatch[1];
+    const unquotedMatch = contentDisposition.match(/filename=([^;]+)/i);
+    if (unquotedMatch) return unquotedMatch[1].trim().replace(/^"|"$/g, '');
+    return null;
+  };
+
   // Upload form state
   const [uploadForm, setUploadForm] = useState({
     file: null,
@@ -52,12 +71,13 @@ export default function FileVCManager() {
       if (!file) {
         throw new Error('Please select a file to upload');
       }
+      console.log('Uploading file:', file.name);
       formData.append('data', file);
       formData.append('access_level', uploadForm.accessLevel);
       formData.append('owner_did', uploadForm.ownerDid);
       formData.append('encrypt_type', 'ecdh-es');
       
-      const response = await fetch('https://fmanager-dev.pila.vn/api/v1/issuer/files/upload', {
+      const response = await fetch('/api/v1/issuer/files/upload', {
         method: 'POST',
         headers: {
           'x-issuer-did': uploadForm.issuerDid
@@ -90,7 +110,7 @@ export default function FileVCManager() {
     setError(null);
     
     try {
-      const response = await fetch(`https://fmanager-dev.pila.vn/api/v1/issuer/files/${viewCid}`, {
+      const response = await fetch(`/api/v1/issuer/files/${viewCid}`, {
         headers: {
           'accept': 'application/octet-stream',
           'x-issuer-did': viewForm.issuerDid
@@ -109,14 +129,10 @@ export default function FileVCManager() {
       
       // Extract filename from Content-Disposition header
       const contentDisposition = response.headers.get('Content-Disposition');
-      let filename = 'download';
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="([^"]+)"/);
-        if (filenameMatch) {
-          filename = filenameMatch[1];
-        }
-      }
+      console.log('Content-Disposition (issuer view):', contentDisposition);
+      let filename = extractFilename(contentDisposition) || 'download';
       
+      console.log('Retrieved filename (issuer view):', filename);
       setViewResult({ url, type: blob.type, filename });
     } catch (err) {
       setError(err.message);
@@ -146,7 +162,7 @@ export default function FileVCManager() {
         holder: vcForm.viewerDid.trim()
       };
 
-      const response = await fetch('https://fmanager-dev.pila.vn/api/v1/files/accessible-vc', {
+      const response = await fetch('/api/v1/files/accessible-vc', {
         method: 'POST',
         headers: {
           'accept': 'application/json',
@@ -191,7 +207,7 @@ export default function FileVCManager() {
           verifiableCredential: [viewVcForm.jwtToken.trim()]
         };
 
-        const presentationResponse = await fetch('https://auth-dev.pila.vn/api/v2/presentations', {
+        const presentationResponse = await fetch('/auth-api/v2/presentations', {
           method: 'POST',
           headers: {
             'accept': 'application/json',
@@ -216,7 +232,7 @@ export default function FileVCManager() {
         }
 
         // Then, use the presentation to view the file with Authorization header
-        fileResponse = await fetch(`https://fmanager-dev.pila.vn/api/v1/viewer/files/${viewVcForm.cid.trim()}`, {
+        fileResponse = await fetch(`/api/v1/viewer/files/${viewVcForm.cid.trim()}`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
@@ -226,7 +242,7 @@ export default function FileVCManager() {
         });
       } else {
         // If no JWT, just call view file directly
-        fileResponse = await fetch(`https://fmanager-dev.pila.vn/api/v1/viewer/files/${viewVcForm.cid.trim()}`, {
+        fileResponse = await fetch(`/api/v1/viewer/files/${viewVcForm.cid.trim()}`, {
           method: 'GET',
           headers: {
             'accept': 'application/octet-stream'
@@ -247,14 +263,10 @@ export default function FileVCManager() {
     
     // Extract filename from Content-Disposition header
     const contentDisposition = fileResponse.headers.get('Content-Disposition');
-    let filename = 'download';
-    if (contentDisposition) {
-      const filenameMatch = contentDisposition.match(/filename="([^"]+)"/);
-      if (filenameMatch) {
-        filename = filenameMatch[1];
-      }
-    }
+    console.log('Content-Disposition (viewer VC):', contentDisposition);
+    let filename = extractFilename(contentDisposition) || 'download';
     
+    console.log('Retrieved filename (viewer VC):', filename);
     setViewResult({ 
       url, 
       type: blob.type, 

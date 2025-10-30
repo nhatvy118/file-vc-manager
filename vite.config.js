@@ -25,6 +25,10 @@ export default defineConfig({
             console.log('Sending Request to the Target:', req.method, req.url);
           });
           proxy.on('proxyRes', (proxyRes, req, _res) => {
+            // Ensure browser can read Content-Disposition header (needed for filename)
+            const current = proxyRes.headers['access-control-expose-headers'];
+            const exposeList = current ? `${current}, Content-Disposition` : 'Content-Disposition';
+            proxyRes.headers['access-control-expose-headers'] = exposeList;
             console.log('Received Response from the Target:', proxyRes.statusCode, req.url);
           });
         },
@@ -42,6 +46,9 @@ export default defineConfig({
             console.log('Sending Request to Auth Target:', req.method, req.url);
           });
           proxy.on('proxyRes', (proxyRes, req, _res) => {
+            const current = proxyRes.headers['access-control-expose-headers'];
+            const exposeList = current ? `${current}, Content-Disposition` : 'Content-Disposition';
+            proxyRes.headers['access-control-expose-headers'] = exposeList;
             console.log('Received Response from Auth Target:', proxyRes.statusCode, req.url);
           });
         },
