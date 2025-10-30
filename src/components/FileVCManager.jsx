@@ -57,7 +57,7 @@ export default function FileVCManager() {
       formData.append('owner_did', uploadForm.ownerDid);
       formData.append('encrypt_type', 'ecdh-es');
       
-      const response = await fetch('/api/v1/issuer/files/upload', {
+      const response = await fetch('https://fmanager-dev.pila.vn/api/v1/issuer/files/upload', {
         method: 'POST',
         headers: {
           'x-issuer-did': uploadForm.issuerDid
@@ -90,7 +90,7 @@ export default function FileVCManager() {
     setError(null);
     
     try {
-      const response = await fetch(`/api/v1/issuer/files/${viewCid}`, {
+      const response = await fetch(`https://fmanager-dev.pila.vn/api/v1/issuer/files/${viewCid}`, {
         headers: {
           'accept': 'application/octet-stream',
           'x-issuer-did': viewForm.issuerDid
@@ -146,7 +146,7 @@ export default function FileVCManager() {
         holder: vcForm.viewerDid.trim()
       };
 
-      const response = await fetch('/api/v1/files/accessible-vc', {
+      const response = await fetch('https://fmanager-dev.pila.vn/api/v1/files/accessible-vc', {
         method: 'POST',
         headers: {
           'accept': 'application/json',
@@ -191,7 +191,7 @@ export default function FileVCManager() {
           verifiableCredential: [viewVcForm.jwtToken.trim()]
         };
 
-        const presentationResponse = await fetch('/auth-api/v2/presentations', {
+        const presentationResponse = await fetch('https://auth-dev.pila.vn/api/v2/presentations', {
           method: 'POST',
           headers: {
             'accept': 'application/json',
@@ -216,7 +216,7 @@ export default function FileVCManager() {
         }
 
         // Then, use the presentation to view the file with Authorization header
-        fileResponse = await fetch(`/api/v1/viewer/files/${viewVcForm.cid.trim()}`, {
+        fileResponse = await fetch(`https://fmanager-dev.pila.vn/api/v1/viewer/files/${viewVcForm.cid.trim()}`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
@@ -226,7 +226,7 @@ export default function FileVCManager() {
         });
       } else {
         // If no JWT, just call view file directly
-        fileResponse = await fetch(`/api/v1/viewer/files/${viewVcForm.cid.trim()}`, {
+        fileResponse = await fetch(`https://fmanager-dev.pila.vn/api/v1/viewer/files/${viewVcForm.cid.trim()}`, {
           method: 'GET',
           headers: {
             'accept': 'application/octet-stream'
